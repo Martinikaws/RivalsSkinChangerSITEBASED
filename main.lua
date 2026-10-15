@@ -3108,18 +3108,22 @@ local function applySkybox(conf)
     -- capacity is 15 or less, otherwise a pointer to it), length at +16,
     -- capacity at +24. Only a heap string that holds an image path is read
     -- or rewritten, and only with text that fits its buffer.
+    local function isImagePath(s)
+        return (s:find("^rbxasset") or s:find("^https?://")) and not s:find("[^\32-\126]") and true or false
+    end
     local function readFace(base)
         local size, cap, ptr = rd(base + 16), rd(base + 24), rd(base)
-        if not size or not cap or not ptr or cap < 16 or cap > 0x1000 or size > cap or ptr < 0x10000 then return nil end
+        if not size or not cap or not ptr or size < 1 or cap < 16 or cap > 0x1000 or size > cap or ptr < 0x10000 then return nil end
         local ok, s = pcall(mrd, "string", ptr)
         if not ok or type(s) ~= "string" or #s < size then return nil end
         s = s:sub(1, size)
-        if s ~= "" and not (s:find("^rbxasset") or s:find("^https?://")) then return nil end
+        if not isImagePath(s) then return nil end
         return s, ptr, cap
     end
+    -- Only text readFace would accept back is written, so every write can be undone.
     local function writeFace(base, str)
         local cur, ptr, cap = readFace(base)
-        if not cur or #str > cap then return false end
+        if not cur or #str > cap or not isImagePath(str) then return false end
         for i = 1, #str do
             if not pcall(mwr, "byte", ptr + i - 1, string.byte(str, i)) then
                 -- Half a new id could name some other image; put the old one back.

@@ -91,10 +91,15 @@ def main(argv):
         try:
             result = grant_open_use(key, batch)
         except Exception as e:
-            print("Roblox refused the request: %s" % e)
-            print("Check that the key has the Asset Permissions API with write access and belongs to")
-            print("the account that uploaded the skies.")
-            return 1
+            # Earlier batches may already be Open Use for good, so always fall
+            # through to the summary instead of stopping here.
+            print("  batch %d-%d failed: %s" % (i + 1, i + len(batch), e))
+            failed.setdefault("request failed (%s)" % str(e)[:60], []).extend(batch)
+            if i == 0 and ("HTTP 401" in str(e) or "HTTP 403" in str(e)):
+                print("Check that the key has the Asset Permissions API with write access and belongs to")
+                print("the account that uploaded the skies.")
+                return 1
+            continue
         opened += [int(a) for a in result.get("successAssetIds") or []]
         for err in result.get("errors") or []:
             code, asset = str(err.get("code")), int(err.get("assetId") or 0)
@@ -115,6 +120,9 @@ def main(argv):
     elif already and not failed:
         print("Every image was Open Use already, so privacy isn't why the skies crash.")
         print("Next: python check_sky_faces.py <path to rivals-skins/tools/skies/prepared>")
+    if failed:
+        print("Some requests failed; run it again for those. Keep the counts above: on a rerun,")
+        print("the images this run made Open Use show up as 'already Open Use'.")
     return 1 if failed else 0
 
 

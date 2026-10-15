@@ -55,7 +55,7 @@ Force=yes
 ```
 
 Picking another sky, or none, puts back what an earlier run wrote without a
-rejoin.
+rejoin, as long as Matcha hasn't restarted in between (otherwise rejoin).
 
 The uploaded skies crashed the game on build cec3ad5, while the game's own
 skies didn't. The changer used to rewrite the sky on screen as well as the map
