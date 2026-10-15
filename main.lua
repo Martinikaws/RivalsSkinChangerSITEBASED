@@ -3166,15 +3166,15 @@ local function applySkybox(conf)
     for i = 1, 6 do if ids[i] then given = given + 1 end end
     if given == 0 then return 0, restoredNote end
 
-    -- Only images the game's own skies use are written. Since Roblox build
-    -- cec3ad5 (Oct 2026) a sky holding other images - every uploaded sky
-    -- and custom id tried so far - crashes the game on the next map load,
-    -- while the game's own skies never have. The id decides, not the preset
+    -- Only images from the skies listed above are written: the game's own
+    -- and the uploaded ones. Since Roblox build cec3ad5 (Oct 2026) a sky
+    -- the game can't load crashes it on the next map load, so an image id
+    -- from anywhere else is turned down. The id decides, not the preset
     -- name, so All= and per-face lines are held to the same rule. Force=yes
     -- writes them anyway, to test a sky.
     local safe = {}
-    for _, name in ipairs({"blue", "station", "graveyard", "sudden death", "space", "westown", "black", "classic"}) do
-        for _, v in ipairs(SKYBOX_PRESETS[name] or {}) do safe[skyboxAssetId(v)] = true end
+    for _, faces in pairs(SKYBOX_PRESETS) do
+        for _, v in ipairs(faces) do safe[skyboxAssetId(v)] = true end
     end
     local force = tostring(conf.force or ""):lower():match("^%s*(%w+)")
     force = force == "yes" or force == "true" or force == "on" or force == "1"
@@ -3183,9 +3183,9 @@ local function applySkybox(conf)
     if foreign > 0 and not force then
         conf.__refused = true
         return 0, (preset and ("the '" .. tostring(preset) .. "' sky") or "the custom sky") .. " was not applied: "
-            .. foreign .. " of its faces aren't images the game's own skies use, and since Roblox build cec3ad5 such a sky "
-            .. "crashes the game on the next map load. These work: Blue, Station, Graveyard, Sudden Death, Space, "
-            .. "Westown, Black, Classic. To try it anyway, add Force=yes under [Skybox]", true
+            .. foreign .. " of its faces aren't images from the changer's skies, and since Roblox build cec3ad5 a sky "
+            .. "the game can't load crashes it on the next map load. Pick one of the listed skies, or add Force=yes "
+            .. "under [Skybox] to try it anyway", true
     end
 
     local skies, seen = {}, {}
