@@ -3188,9 +3188,18 @@ local function applySkybox(conf)
             .. "under [Skybox] to try it anyway", true
     end
 
+    -- Only the map templates are rewritten, never the sky being drawn in
+    -- Lighting: a map load clones a template there, so the live sky gains
+    -- nothing from the change. Rewriting it did harm: the next map load
+    -- destroys it and frees its textures under the new ids, which the game
+    -- never loaded - the likely reason a sky with images the game hadn't
+    -- preloaded (the uploaded ones) crashed it, while its own skies didn't.
+    local lighting = game:GetService("Lighting").Address
     local skies, seen = {}, {}
     local function add(inst)
         if inst and inst.ClassName == "Sky" and inst.Address and not seen[inst.Address] then
+            local parent = inst.Parent
+            if parent and parent.Address == lighting then return end
             seen[inst.Address] = true
             skies[#skies + 1] = inst
         end
@@ -3217,7 +3226,6 @@ local function applySkybox(conf)
             if profiles and profiles.Name == "LightingProfiles" then add(d) end
         end
     end
-    for _, c in ipairs(game:GetService("Lighting"):GetChildren()) do add(c) end
 
     -- A template takes all the faces given or none of them, and every
     -- change is remembered so the next run can put it back.

@@ -57,9 +57,13 @@ Force=yes
 Picking another sky, or none, puts back what an earlier run wrote without a
 rejoin.
 
-The uploaded skies crashed the game on build cec3ad5 for the account that
-uploaded them, while the game's own skies didn't. If one crashes, rejoin, pick
-another sky, and run the scripts in [`tools`](tools) (Python 3):
+The uploaded skies crashed the game on build cec3ad5, while the game's own
+skies didn't. The changer used to rewrite the sky on screen as well as the map
+templates; the next map load then freed that sky's textures under image ids the
+game had never loaded, which is the likely cause (the game preloads its own sky
+images, so those were found). It now rewrites only the templates, which is all
+a map load reads. If an uploaded sky still crashes, rejoin, pick another sky,
+and run the scripts in [`tools`](tools) (Python 3):
 
 1. `open_use_skies.py` makes every uploaded sky image Open Use (needs an Open
    Cloud API key with the Asset Permissions API) and says whether they were
