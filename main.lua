@@ -3102,16 +3102,47 @@ local function skyboxAssetId(v)
     return digits and ("rbxassetid://" .. digits) or nil
 end
 
-local function writeRobloxString(base, str)
-    local ptr, cap = rd(base), mrd("uint64_t", base + 24)
-    if not ptr or not cap or ptr < 0x10000 or #str > cap then return false end
-    for i = 1, #str do mwr("uint8_t", ptr + i - 1, string.byte(str, i)) end
-    mwr("uint8_t", ptr + #str, 0)
-    mwr("uint64_t", base + 16, #str)
-    return true
-end
-
+-- Returns patched, note, refused (true when the sky was turned down).
 local function applySkybox(conf)
+    -- A face is an MSVC std::string: the text at +0 (inline when the
+    -- capacity is 15 or less, otherwise a pointer to it), length at +16,
+    -- capacity at +24. Only a heap string that holds an image path is read
+    -- or rewritten, and only with text that fits its buffer.
+    local function readFace(base)
+        local size, cap, ptr = rd(base + 16), rd(base + 24), rd(base)
+        if not size or not cap or not ptr or cap < 16 or cap > 0x1000 or size > cap or ptr < 0x10000 then return nil end
+        local ok, s = pcall(mrd, "string", ptr)
+        if not ok or type(s) ~= "string" or #s < size then return nil end
+        s = s:sub(1, size)
+        if s ~= "" and not (s:find("^rbxasset") or s:find("^https?://")) then return nil end
+        return s, ptr, cap
+    end
+    local function writeFace(base, str)
+        local cur, ptr, cap = readFace(base)
+        if not cur or #str > cap then return false end
+        for i = 1, #str do
+            if not pcall(mwr, "byte", ptr + i - 1, string.byte(str, i)) then
+                -- Half a new id could name some other image; put the old one back.
+                for j = 1, i - 1 do pcall(mwr, "byte", ptr + j - 1, string.byte(cur, j) or 0) end
+                return false
+            end
+        end
+        pcall(mwr, "byte", ptr + #str, 0)
+        wr(base + 16, #str)
+        return true
+    end
+
+    -- Put back the faces an earlier run in this server wrote, where they
+    -- still hold what it wrote, so Off or another sky needs no rejoin.
+    -- (_G is lost when Matcha restarts; rejoining always resets the skies.)
+    local restored = 0
+    local prev = _G.__RIVALS_SKY_WRITES
+    _G.__RIVALS_SKY_WRITES = nil
+    for addr, w in pairs(type(prev) == "table" and prev or {}) do
+        if readFace(addr) == w[2] and writeFace(addr, w[1]) then restored = restored + 1 end
+    end
+    local restoredNote = restored > 0 and "the game's own skies are back from the next map load" or nil
+
     local ids = {}
     local preset = conf.preset or conf.skybox or conf.name
     -- "gray" is Roblox's DebugSkyGray render flag, not a set of images: it
@@ -3119,19 +3150,6 @@ local function applySkybox(conf)
     local gray = preset and tostring(preset):lower() == "gray"
     if type(setfflag) == "function" then pcall(setfflag, "DebugSkyGray", gray and 1 or 0) end
     if gray then return 0, "gray sky on - shows straight away" end
-    -- Since Roblox build cec3ad5 (Oct 2026) a sky whose images Rivals isn't
-    -- allowed to load crashes the game on the next map load. New uploads are
-    -- private to their owner, so the community skies (uploaded by Martinikaws
-    -- in 2026) crash; the older public images Rivals can load still work.
-    -- Only those presets are applied until the uploads are made public.
-    do
-        local PUBLIC = {blue = true, station = true, graveyard = true, ["sudden death"] = true, space = true,
-            westown = true, black = true, classic = true}
-        if preset and not PUBLIC[tostring(preset):lower()] then
-            return 0, "the '" .. tostring(preset) .. "' sky can't load in Rivals right now (its images aren't public) and would crash the game - "
-                .. "these work: Blue, Station, Graveyard, Sudden Death, Space, Westown, Black, Classic"
-        end
-    end
     if preset then
         local p = SKYBOX_PRESETS[tostring(preset):lower()]
         if not p then return 0, "unknown skybox preset '" .. tostring(preset) .. "'" end
@@ -3146,7 +3164,29 @@ local function applySkybox(conf)
 
     local given = 0
     for i = 1, 6 do if ids[i] then given = given + 1 end end
-    if given == 0 then return 0, nil end
+    if given == 0 then return 0, restoredNote end
+
+    -- Only images the game's own skies use are written. Since Roblox build
+    -- cec3ad5 (Oct 2026) a sky holding other images - every uploaded sky
+    -- and custom id tried so far - crashes the game on the next map load,
+    -- while the game's own skies never have. The id decides, not the preset
+    -- name, so All= and per-face lines are held to the same rule. Force=yes
+    -- writes them anyway, to test a sky.
+    local safe = {}
+    for _, name in ipairs({"blue", "station", "graveyard", "sudden death", "space", "westown", "black", "classic"}) do
+        for _, v in ipairs(SKYBOX_PRESETS[name] or {}) do safe[skyboxAssetId(v)] = true end
+    end
+    local force = tostring(conf.force or ""):lower():match("^%s*(%w+)")
+    force = force == "yes" or force == "true" or force == "on" or force == "1"
+    local foreign = 0
+    for i = 1, 6 do if ids[i] and not safe[ids[i]] then foreign = foreign + 1 end end
+    if foreign > 0 and not force then
+        conf.__refused = true
+        return 0, (preset and ("the '" .. tostring(preset) .. "' sky") or "the custom sky") .. " was not applied: "
+            .. foreign .. " of its faces aren't images the game's own skies use, and since Roblox build cec3ad5 such a sky "
+            .. "crashes the game on the next map load. These work: Blue, Station, Graveyard, Sudden Death, Space, "
+            .. "Westown, Black, Classic. To try it anyway, add Force=yes under [Skybox]", true
+    end
 
     local skies, seen = {}, {}
     local function add(inst)
@@ -3179,16 +3219,31 @@ local function applySkybox(conf)
     end
     for _, c in ipairs(game:GetService("Lighting"):GetChildren()) do add(c) end
 
-    local patched, skipped = 0, 0
+    -- A template takes all the faces given or none of them, and every
+    -- change is remembered so the next run can put it back.
+    local patched, skipped, writes = 0, 0, {}
     for _, d in ipairs(skies) do
-        local ok = 0
+        local done = {}
         for i, f in ipairs(SKYBOX_FACES) do
-            if ids[i] and writeRobloxString(d.Address + f[2], ids[i]) then ok = ok + 1 end
+            local addr = d.Address + f[2]
+            local orig = ids[i] and readFace(addr)
+            if orig and writeFace(addr, ids[i]) then done[#done + 1] = {addr, orig, ids[i]} end
         end
-        if ok == given then patched = patched + 1 else skipped = skipped + 1 end
+        if #done == given then
+            patched = patched + 1
+            for _, w in ipairs(done) do
+                if w[2] ~= w[3] then writes[w[1]] = {w[2], w[3]} end
+            end
+        else
+            skipped = skipped + 1
+            for _, w in ipairs(done) do writeFace(w[1], w[2]) end
+        end
     end
-    if patched == 0 then return 0, "no sky templates found" end
-    return patched, (skipped > 0) and (skipped .. " sky templates were left alone (id too long for the game's buffer)") or nil
+    if next(writes) then _G.__RIVALS_SKY_WRITES = writes end
+    if patched == 0 then
+        return 0, skipped > 0 and (skipped .. " sky templates couldn't hold the new images - left as they were") or "no sky templates found"
+    end
+    return patched, (skipped > 0) and (skipped .. " sky templates were left alone (a face couldn't hold the new image)") or nil
 end
 
 -- Hit, headshot and kill sounds
@@ -3976,6 +4031,7 @@ local function applyLighting(conf, cache)
     local values = {}
     local name = conf.preset and tostring(conf.preset):lower()
     if name == "match" then
+        if configSkybox.__refused then return 0, "the sky wasn't applied, so the lighting was left as it is" end
         local sky = configSkybox.preset or configSkybox.skybox or configSkybox.name
         name = sky and tostring(sky):lower()
         if not (name and LIGHTING_PRESETS[name]) then return 0, "no lighting preset matches this skybox - left as it is" end
@@ -4142,13 +4198,14 @@ if ENABLE_SKIN_DATA_SYNC and (#skinDataPairs > 0 or #wrapPairs > 0) then
     end
 end
 local function applyPostEffects()
-    local okSky, patched, skyNote = pcall(applySkybox, configSkybox)
+    local okSky, patched, skyNote, skyRefused = pcall(applySkybox, configSkybox)
     if okSky and (patched or 0) > 0 then
         local msg = "Skybox set on " .. tostring(patched) .. " map profiles - it shows on the next map or area load"
         print("[RivalsSkinChanger] " .. msg .. (skyNote and (" (" .. skyNote .. ")") or ""))
         notifyUser("Rivals Skin Changer", msg, 6)
     elseif okSky and skyNote then
         print("[RivalsSkinChanger] Skybox: " .. tostring(skyNote))
+        if skyRefused then notifyUser("Rivals Skin Changer", "Sky not applied - it would crash the game (see the console)", 8) end
     elseif not okSky then
         print("[RivalsSkinChanger] Skybox error: " .. tostring(patched))
     end
