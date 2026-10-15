@@ -41,31 +41,29 @@ going.
 
 ## Skyboxes
 
-Since Roblox build cec3ad5 (October 2026) a sky made of images other than the
-game's own crashes Rivals on the next map load. That covered every uploaded sky
-and custom image id tried so far. So the changer only writes images the game's
-own skies use: Blue, Station, Graveyard, Sudden Death, Space, Westown, Black and
-Classic. Any other sky is turned down with a message, whether it comes as
-`Preset=`, `All=` or per-face `BK=` ... `UP=` lines. Picking another sky, or
-none, puts back what an earlier run wrote without a rejoin.
-
-To try a sky anyway, add `Force=yes` to the `[Skybox]` section:
+The changer writes the images of its own skies: the game's (Blue, Station,
+Graveyard, Sudden Death, Space, Westown, Black, Classic) and the 91 uploaded
+ones. Since Roblox build cec3ad5 (October 2026) a sky the game can't load
+crashes Rivals on the next map load, so any other image id is turned down with
+a message, whether it comes as `Preset=`, `All=` or per-face `BK=` ... `UP=`
+lines. To try one anyway, add `Force=yes` to the `[Skybox]` section:
 
 ```
 [Skybox]
-Preset=cloudy 01
+All=123456789
 Force=yes
 ```
 
-If it crashes, rejoin and remove the line.
+Picking another sky, or none, puts back what an earlier run wrote without a
+rejoin.
 
-The uploaded skies' images belong to the account that uploaded them. Two
-scripts in [`tools`](tools) help get them working again (Python 3):
+The uploaded skies crashed the game on build cec3ad5 for the account that
+uploaded them, while the game's own skies didn't. If one crashes, rejoin, pick
+another sky, and run the scripts in [`tools`](tools) (Python 3):
 
 1. `open_use_skies.py` makes every uploaded sky image Open Use (needs an Open
    Cloud API key with the Asset Permissions API) and says whether they were
-   Restricted, which would stop Rivals loading them. If some were, try one sky
-   with `Force=yes`.
+   Restricted, which would stop Rivals loading them.
 2. If they were Open Use already, `check_sky_faces.py` checks the prepared
    faces (`tools/skies/prepared` in the site repo) for faces that aren't
    square, the same size or plain RGB.

@@ -1,14 +1,14 @@
 """Make the uploaded sky images Open Use, and find out whether they were.
 
-Since Roblox build cec3ad5 (Oct 2026) the uploaded skies crash RIVALS on the
-next map load, so the changer turns them down. Images are created Open Use
-unless the account opted into Asset Privacy (Creator Dashboard > Settings >
-Advanced); a Restricted image can only load in games its owner can edit, and
-RIVALS isn't one. This script asks Roblox to make every uploaded sky image
-Open Use and reports what each one was:
+Since Roblox build cec3ad5 (Oct 2026) the uploaded skies have crashed RIVALS
+on the next map load for the account that uploaded them. Images are created
+Open Use unless the account opted into Asset Privacy (Creator Dashboard >
+Settings > Advanced); a Restricted image can only load in games its owner can
+edit, and RIVALS isn't one. This script asks Roblox to make every uploaded sky
+image Open Use and reports what each one was:
 
 - "made Open Use": it was Restricted, so RIVALS was never allowed to load it.
-  Try one sky in game with Force=yes (see the README).
+  Pick the sky again in game.
 - "already Open Use": privacy isn't the cause. Run check_sky_faces.py on the
   prepared faces next.
 
@@ -110,11 +110,8 @@ def main(argv):
         print("failed (%s): %d - %s" % (code, len(bad), ", ".join(names[:12]) + (" ..." if len(names) > 12 else "")))
     print()
     if opened:
-        print("Some images were Restricted, so RIVALS couldn't load them. Try one sky in game:")
-        print("  [Skybox]")
-        print("  Preset=%s" % ids[opened[0]])
-        print("  Force=yes")
-        print("If the next map shows it without crashing, the uploaded skies can be turned back on.")
+        print("Some images were Restricted, so RIVALS couldn't load them. Pick one of those skies")
+        print("again (e.g. %s) and load a map." % ids[opened[0]])
     elif already and not failed:
         print("Every image was Open Use already, so privacy isn't why the skies crash.")
         print("Next: python check_sky_faces.py <path to rivals-skins/tools/skies/prepared>")
