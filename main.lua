@@ -3088,8 +3088,6 @@ local SKYBOX_PRESETS = {
     ["winterness"] = {"93314155085684", "86544552740075", "82163169918498", "113463592358754", "89545353728911", "112700328026196"},
     ["xen"] = {"138521026317896", "93370270064161", "77429040495782", "124709280024255", "117416468013692", "98120283931640"},
     ["zen end"] = {"109470247657976", "118949631704099", "122702664050796", "139189653780112", "125062544262187", "85640581945708"},
-    ["classic"] = {"rbxasset://sky/sky512_bk.tex", "rbxasset://sky/sky512_dn.tex", "rbxasset://sky/sky512_ft.tex",
-                   "rbxasset://sky/sky512_lf.tex", "rbxasset://sky/sky512_rt.tex", "rbxasset://sky/sky512_up.tex"}
 }
 local SKYBOX_FACES = {{"bk", dumpOff("Sky", "SkyboxBk", 0xe8)}, {"dn", dumpOff("Sky", "SkyboxDn", 0x118)},
     {"ft", dumpOff("Sky", "SkyboxFt", 0x148)}, {"lf", dumpOff("Sky", "SkyboxLf", 0x178)},
@@ -3120,10 +3118,15 @@ local function applySkybox(conf)
         if not isImagePath(s) then return nil end
         return s, ptr, cap
     end
-    -- Only text readFace would accept back is written, so every write can be undone.
+    -- Only text readFace would accept back is written, so every write can be
+    -- undone. Each face also records which kind of address it holds, which
+    -- an in-place write can't change: rbxasset://sky/sky512_up.tex written
+    -- over an rbxassetid:// face was read as asset id "y/sky512_up.tex" and
+    -- crashed the game. So the new text must use the face's own scheme.
     local function writeFace(base, str)
         local cur, ptr, cap = readFace(base)
         if not cur or #str > cap or not isImagePath(str) then return false end
+        if (cur:match("^(%a+://)") or "") ~= (str:match("^(%a+://)") or "?") then return false end
         for i = 1, #str do
             if not pcall(mwr, "byte", ptr + i - 1, string.byte(str, i)) then
                 -- Half a new id could name some other image; put the old one back.
@@ -3156,6 +3159,11 @@ local function applySkybox(conf)
     if gray then return 0, "gray sky on - shows straight away" end
     if preset then
         local p = SKYBOX_PRESETS[tostring(preset):lower()]
+        if not p and tostring(preset):lower() == "classic" then
+            conf.__refused = true
+            return 0, "the Classic sky is gone: its images are rbxasset:// files that ship with Roblox, while the map "
+                .. "skies hold rbxassetid:// ids, and Roblox read the one as the other and crashed. Pick another sky", true
+        end
         if not p then return 0, "unknown skybox preset '" .. tostring(preset) .. "'" end
         for i, v in ipairs(p) do ids[i] = skyboxAssetId(v) end
     end
@@ -3182,6 +3190,17 @@ local function applySkybox(conf)
     end
     local force = tostring(conf.force or ""):lower():match("^%s*(%w+)")
     force = force == "yes" or force == "true" or force == "on" or force == "1"
+    -- The map skies hold rbxassetid:// ids, and a face can't change the kind
+    -- of address it holds (see writeFace), so anything else - a local
+    -- rbxasset:// file or an http link - is turned down even with Force=yes.
+    for i = 1, 6 do
+        if ids[i] and not ids[i]:find("^rbxassetid://%d+$") then
+            conf.__refused = true
+            return 0, (preset and ("the '" .. tostring(preset) .. "' sky") or "the custom sky") .. " was not applied: '"
+                .. ids[i] .. "' isn't an rbxassetid:// image id, and the map skies can only take those - Roblox "
+                .. "reads anything else as a broken asset id and crashes. Use the image's number", true
+        end
+    end
     local foreign = 0
     for i = 1, 6 do if ids[i] and not safe[ids[i]] then foreign = foreign + 1 end end
     if foreign > 0 and not force then

@@ -42,7 +42,7 @@ going.
 ## Skyboxes
 
 The changer writes the images of its own skies: the game's (Blue, Station,
-Graveyard, Sudden Death, Space, Westown, Black, Classic) and the 91 uploaded
+Graveyard, Sudden Death, Space, Westown, Black) and the 91 uploaded
 ones. Since Roblox build cec3ad5 (October 2026) a sky the game can't load
 crashes Rivals on the next map load, so any other image id is turned down with
 a message, whether it comes as `Preset=`, `All=` or per-face `BK=` ... `UP=`
@@ -53,6 +53,12 @@ lines. To try one anyway, add `Force=yes` to the `[Skybox]` section:
 All=123456789
 Force=yes
 ```
+
+Only image numbers (`rbxassetid://`) can be written, even with `Force=yes`.
+Each sky face records which kind of address it holds, and the map skies hold
+image numbers. The old Classic sky wrote Roblox's own `rbxasset://sky/...`
+files over them; Roblox then read each path as a broken image number and
+crashed. Classic is gone, and local files and links are turned down.
 
 Picking another sky, or none, puts back what an earlier run wrote without a
 rejoin, as long as Matcha hasn't restarted in between (otherwise rejoin).
