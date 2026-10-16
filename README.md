@@ -39,6 +39,17 @@ Run it once per server; a first run takes about three seconds. It stops quietly
 in any game other than Rivals, and refuses to start a second run while one is
 going.
 
+## Roblox updates
+
+The changer downloads the latest Roblox offsets list on each run, but uses it
+only when it's for the Roblox build you're running: the version Matcha reports,
+or, where it can't, a check that the list's pointers lead to this game. The list follows the newest
+Roblox, and a bootstrapper can keep you on an older one. Every list is saved in
+`rivals_offsets\` under its Roblox version, so an older build finds its own;
+with none that fits, the built-in offsets are used. The console's `Offsets:`
+line says which, and the sky, lighting, sound and name changes check their
+fields in the game first and are skipped if they don't fit.
+
 ## Skyboxes
 
 The changer writes the images of its own skies: the game's (Blue, Station,

@@ -121,14 +121,18 @@ local wr = function(a, v)
     pcall(mwr, "uintptr_t", a, v)
 end
 
--- Offsets. Taken from the latest Roblox offsets dump (offsets.imtheo.lol),
--- which is saved to a file so the last good one is used when the site is
--- down. The numbers after each name are the fallback (Roblox build cec3ad5).
--- The Instance offsets are then checked on the live game and found by
--- scanning if they are wrong, so an update that moves them doesn't stop the
--- changer even before the dump has caught up.
+-- Offsets. From the Roblox offsets dump (offsets.imtheo.lol), but only one
+-- made for the Roblox build that is running: the site follows the newest
+-- Roblox, and Matcha users are often a build behind (pinned by a bootstrapper).
+-- A dump fits when its module pointer to the DataModel, which moves with
+-- nearly every build, leads to this game. Every dump is saved under its
+-- Roblox version, so an older build finds its own later; with none that
+-- fits, the numbers after each name are used (Roblox build cec3ad5). The
+-- Instance offsets are then checked on the live game and found by scanning
+-- if they are wrong, and the sky, lighting, sound and name writers check
+-- their fields before writing.
 local dumpOff = (function()
-    local OFFSETS_CACHE = "rivals_offsets_cache.json"
+    local LEGACY_CACHE, CACHE_DIR = "rivals_offsets_cache.json", "rivals_offsets"
     local URLS = {"https://offsets.imtheo.lol/Offsets.json"}
     local hs = game:GetService("HttpService")
     local function decode(raw)
@@ -136,23 +140,75 @@ local dumpOff = (function()
         local ok, data = pcall(function() return hs:JSONDecode(raw) end)
         if ok and type(data) == "table" and type(data.Offsets) == "table" then return data end
     end
-    local data, from
+    local function versionOf(data)
+        return tostring(data["Roblox Version"] or ""):match("^version%-%x+$")
+    end
+    -- The running build, where Matcha can tell it (e.g. "version-cec3ad5889b447cf").
+    local okV, running = pcall(function() return getrbxversion() end)
+    running = okV and type(running) == "string" and running:match("version%-%x+") or nil
+    -- true: the dump is for this build (same version, or its DataModel pointer
+    -- leads to this game); false: it isn't; nil: can't be told (no version,
+    -- no getbase, or the dump lacks the pointer).
+    local function fits(data)
+        local v = versionOf(data)
+        if running and v then return v == running end
+        local f = data.Offsets.FakeDataModel
+        local ptr = type(f) == "table" and tonumber(f.Pointer)
+        local real = type(f) == "table" and tonumber(f.RealDataModel)
+        local okB, base = pcall(function() return getbase() end)
+        local okG, dm = pcall(function() return game.Address end)
+        if not ptr or not real or not okB or type(base) ~= "number" or base < 0x10000
+            or not okG or type(dm) ~= "number" or dm < 0x10000 then return nil end
+        local fake = rd(base + ptr)
+        if not fake or fake < 0x10000 then return false end
+        return rd(fake + real) == dm
+    end
+
+    local online
     for _, url in ipairs(URLS) do
         local ok, raw = pcall(function() return game:HttpGet(url) end)
-        data = ok and decode(raw) or nil
-        if data then
-            from = "online"
-            pcall(writefile, OFFSETS_CACHE, raw)
+        online = ok and decode(raw) or nil
+        if online then
+            -- Right for its own build, whichever that is.
+            local v = versionOf(online)
+            if v then
+                pcall(makefolder, CACHE_DIR)
+                pcall(writefile, CACHE_DIR .. "/" .. v .. ".json", raw)
+            end
             break
         end
     end
+
+    local data, from, fit
+    if online then
+        fit = fits(online)
+        if fit ~= false then data, from = online, "online" end
+    end
     if not data then
-        local ok, raw = pcall(function() return isfile(OFFSETS_CACHE) and readfile(OFFSETS_CACHE) or nil end)
-        data = ok and decode(raw) or nil
-        if data then from = "saved copy" end
+        -- A saved dump that fits: one per Roblox version, plus the single
+        -- file earlier versions of the changer kept.
+        local paths = {running and (CACHE_DIR .. "/" .. running .. ".json") or nil}
+        local okL, list = pcall(listfiles, CACHE_DIR)
+        for _, p in ipairs(okL and type(list) == "table" and list or {}) do
+            if tostring(p):lower():find("%.json$") then paths[#paths + 1] = p end
+        end
+        paths[#paths + 1] = LEGACY_CACHE
+        local untested
+        for _, p in ipairs(paths) do
+            local okR, raw = pcall(function() return isfile(p) and readfile(p) or nil end)
+            local saved = okR and decode(raw) or nil
+            if saved then
+                local f = fits(saved)
+                if f == true then data, from, fit = saved, "saved copy", true break end
+                if f == nil and not untested then untested = saved end
+            end
+        end
+        -- No dump online and no way to check: the last saved one, as before.
+        if not data and not online and untested then data, from = untested, "saved copy" end
     end
     local dump = data and data.Offsets or {}
-    _G.__RSC_OFFSETS = {from = from or "built-in", version = data and data["Roblox Version"]}
+    _G.__RSC_OFFSETS = {from = from or "built-in", version = data and data["Roblox Version"], fits = fit,
+        skipped = online and data ~= online and online["Roblox Version"] or nil}
     return function(class, field, default)
         local c = dump[class]
         local v = type(c) == "table" and tonumber(c[field])
@@ -235,6 +291,8 @@ local function verifyOffsets()
     end
     local info = _G.__RSC_OFFSETS
     print("[RivalsSkinChanger] Offsets: " .. info.from .. (info.version and (" (" .. info.version .. ")") or "")
+        .. (info.fits == true and " - fits this Roblox build" or (info.fits == nil and info.version and " - fit not checked" or ""))
+        .. (info.skipped and (" - the online offsets are for " .. tostring(info.skipped) .. ", not this build") or "")
         .. (#fixed > 0 and (" - corrected on the live game: " .. table.concat(fixed, ", ")) or ""))
 end
 verifyOffsets()
@@ -3432,8 +3490,12 @@ local function startVolumeWatcher(conf)
                         local ok, text = pcall(mrd, "string", rd(a + SOUND_ID_OFF))
                         local g = ok and gains[text]
                         if g then
-                            local v = mrd("float", a + SOUND_VOLUME_OFF)
-                            if v then mwr("float", a + SOUND_VOLUME_OFF, v * g) end
+                            -- Only a value that looks like a volume (0-10): anything else
+                            -- means the offset doesn't fit this Roblox build.
+                            local okV, v = pcall(mrd, "float", a + SOUND_VOLUME_OFF)
+                            if okV and type(v) == "number" and v >= 0 and v <= 10 then
+                                pcall(mwr, "float", a + SOUND_VOLUME_OFF, math.min(v * g, 10))
+                            end
                         end
                     end
                 end
@@ -3671,6 +3733,14 @@ local function startSpoof(conf)
     -- The real values, read once before anything is changed. The display name
     -- is also kept in a file: after a Matcha restart the player object may
     -- still carry a spoofed one.
+    -- The DisplayName field sits at a fixed offset: it is only read or written
+    -- when it holds something that looks like a name (and equals the property,
+    -- where Matcha can read it); otherwise the offset doesn't fit this build.
+    local nameNow = readStdString(LP.Address + DISPLAY_NAME_OFF)
+    local okDN, dn = pcall(function() return LP.DisplayName end)
+    local nameFits = type(nameNow) == "string" and #nameNow >= 1 and #nameNow <= 64 and not nameNow:find("%c")
+        and not (okDN and type(dn) == "string" and dn ~= "" and dn ~= nameNow) or false
+
     local real = _G.__RIVALS_SPOOF_REAL
     if not real or real.user ~= LP.Name then
         real = {user = LP.Name, attrs = {}, stats = {}}
@@ -3678,7 +3748,7 @@ local function startSpoof(conf)
         local savedUser, savedName = (okF and type(saved) == "string" and saved or ""):match("^(.-)\n(.-)\n?$")
         if savedUser == LP.Name and savedName and savedName ~= "" then
             real.display = savedName
-        else
+        elseif nameFits then
             real.display = readStdString(LP.Address + DISPLAY_NAME_OFF)
             if real.display then pcall(writefile, SPOOF_REAL_FILE, LP.Name .. "\n" .. real.display .. "\n") end
         end
@@ -3715,9 +3785,12 @@ local function startSpoof(conf)
     -- The name the player object should carry; the field has room for as many
     -- characters as the real name's storage (15 for a short name).
     local notes = {}
-    local shownName = want.name or real.display
-    local nameCap = rd(LP.Address + DISPLAY_NAME_OFF + 24)
-    if want.name and nameCap and #want.name > nameCap then
+    local shownName = nameFits and (want.name or real.display) or nil
+    if want.name and not nameFits then
+        notes[#notes + 1] = "the display name field doesn't fit this Roblox build - name left alone"
+    end
+    local nameCap = nameFits and rd(LP.Address + DISPLAY_NAME_OFF + 24)
+    if shownName and want.name and nameCap and #want.name > nameCap then
         notes[#notes + 1] = "name longer than " .. nameCap .. " characters - kept the real one"
         shownName = real.display
     end
@@ -4076,10 +4149,37 @@ local function applyLighting(conf, cache)
     if not next(values) then return 0, nil end
 
     local L = game:GetService("Lighting")
+    -- The Lighting fields sit at fixed offsets, so they are only written when
+    -- every one of them holds a value that looks like lighting (or equals the
+    -- property, where Matcha can read it); otherwise the offsets don't fit
+    -- this Roblox build and only the map profiles below are changed.
+    local RANGE = {Brightness = {0, 100}, ExposureCompensation = {-10, 10},
+        EnvironmentDiffuseScale = {0, 1.0001}, EnvironmentSpecularScale = {0, 1.0001}}
+    local function float(o)
+        local ok, v = pcall(mrd, "float", L.Address + o)
+        return ok and type(v) == "number" and v == v and v or nil
+    end
+    local fieldsFit = true
+    for _, field in pairs(LIGHTING_FIELDS) do
+        if field.off then
+            if field.color then
+                for i = 0, 2 do
+                    local v = float(field.off + i * 4)
+                    if not v or v < 0 or v > 1.0001 then fieldsFit = false end
+                end
+            else
+                local v, r = float(field.off), RANGE[field.key] or {-100, 100}
+                local okP, live = pcall(function() return L[field.key] end)
+                if not v or v < r[1] or v > r[2] or (okP and type(live) == "number" and math.abs(v - live) > 1e-3) then
+                    fieldsFit = false
+                end
+            end
+        end
+    end
     local applied = 0
     for name, raw in pairs(values) do
         local field = LIGHTING_FIELDS[name]
-        if field and field.off then
+        if field and field.off and fieldsFit then
             if field.color then
                 local r, g, b = lightingColor(raw)
                 if r then
@@ -4168,6 +4268,11 @@ local function applyLighting(conf, cache)
             end
         end
         if wrote then profiles = profiles + 1 end
+    end
+    if not fieldsFit then
+        return 0, (profiles > 0)
+            and ("set on " .. profiles .. " lighting profiles, from the next map load (the Lighting offsets don't fit this Roblox build)")
+            or "left as it is: the Lighting offsets don't fit this Roblox build and no lighting profiles were found"
     end
     return applied, (profiles > 0) and ("kept across map changes on " .. profiles .. " lighting profiles")
         or "applied to the current area only (lighting profiles not found)"
