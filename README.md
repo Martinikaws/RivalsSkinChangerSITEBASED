@@ -47,9 +47,11 @@ game must lead to your game (or, where that can't be checked, its version must
 be the one Matcha reports). The list follows the newest Roblox, and a
 bootstrapper can keep you on an older one. Then it takes your build's own list:
 one saved earlier in `rivals_offsets\`, or downloaded from the site for your
-version. With neither, the built-in offsets are used. The console's `Offsets:`
-line says which. The sky, lighting, sound and name changes also check their
-fields in the game first, and are skipped if they don't fit.
+version. With neither, the built-in offsets are used. Only if Matcha can't
+check the pointer or tell the version is a list used unchecked: the latest, or
+offline a saved one. The console's `Offsets:` line says which list was
+used and whether it was checked. The sky, lighting, sound and name changes also
+check their fields in the game first, and are skipped if they don't fit.
 
 ## Skyboxes
 

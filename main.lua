@@ -3193,8 +3193,8 @@ local function applySkybox(conf)
     -- an in-place write can't change: rbxasset://sky/sky512_up.tex written
     -- over an rbxassetid:// face was read as asset id "y/sky512_up.tex" and
     -- crashed the game. So the new text must use the face's own scheme -
-    -- except when putting back a face's original text (restoring), which
-    -- always matches the kind the face records, even over an old Classic write.
+    -- except when putting back a face's original image number (restoring),
+    -- the kind every map sky records, even over an old Classic write.
     local function writeFace(base, str, restoring)
         local cur, ptr, cap = readFace(base)
         if not cur or #str > cap or not isImagePath(str) then return false end
@@ -3215,13 +3215,17 @@ local function applySkybox(conf)
     -- still hold what it wrote, so Off or another sky needs no rejoin.
     -- (_G is lost when Matcha restarts; rejoining always resets the skies.)
     -- A face that still holds what was written but can't be put back stays
-    -- remembered for the next run.
+    -- remembered for the next run. Only an image number may be put back over
+    -- a different scheme: an older changer that wrote over an unremembered
+    -- Classic sky recorded Classic's rbxasset:// text as the original, and
+    -- writing that back would crash the game, so the face keeps its image.
     local restored, kept = 0, {}
     local prev = _G.__RIVALS_SKY_WRITES
     _G.__RIVALS_SKY_WRITES = nil
     for addr, w in pairs(type(prev) == "table" and prev or {}) do
-        if readFace(addr) == w[2] then
-            if writeFace(addr, w[1], true) then restored = restored + 1 else kept[addr] = w end
+        if type(w) == "table" and type(w[1]) == "string" and readFace(addr) == w[2] then
+            local toId = w[1]:find("^rbxassetid://%d+$") ~= nil
+            if writeFace(addr, w[1], toId) then restored = restored + 1 elseif toId then kept[addr] = w end
         end
     end
     if next(kept) then _G.__RIVALS_SKY_WRITES = kept end
@@ -3364,15 +3368,22 @@ local function applySkybox(conf)
         end
     end
     if next(writes) then
+        -- A face still remembered from a restore that failed keeps its
+        -- original, so a later undo goes back to the game's image.
         local all = _G.__RIVALS_SKY_WRITES or {}
-        for addr, w in pairs(writes) do all[addr] = w end
-        _G.__RIVALS_SKY_WRITES = all
+        for addr, w in pairs(writes) do
+            local k = all[addr]
+            if k and k[2] == w[1] then w = {k[1], w[2]} end
+            all[addr] = w[1] ~= w[2] and w or nil
+        end
+        _G.__RIVALS_SKY_WRITES = next(all) and all or nil
     end
     if patched == 0 then
         return 0, withClassic(skipped > 0 and (skipped .. " sky templates couldn't hold the new images - left as they were") or "no sky templates found"),
             classicNote and true or nil
     end
-    return patched, withClassic((skipped > 0) and (skipped .. " sky templates were left alone (a face couldn't hold the new image)") or nil)
+    return patched, withClassic((skipped > 0) and (skipped .. " sky templates were left alone (a face couldn't hold the new image)") or nil),
+        classicNote and true or nil
 end
 
 -- Hit, headshot and kill sounds
@@ -4384,6 +4395,7 @@ local function applyPostEffects()
         local msg = "Skybox set on " .. tostring(patched) .. " map profiles - it shows on the next map or area load"
         print("[RivalsSkinChanger] " .. msg .. (skyNote and (" (" .. skyNote .. ")") or ""))
         notifyUser("Rivals Skin Changer", msg, 6)
+        if skyRefused then notifyUser("Rivals Skin Changer", "Skybox: a sky here would crash the game - see the console", 8) end
     elseif okSky and skyNote then
         print("[RivalsSkinChanger] Skybox: " .. tostring(skyNote))
         if skyRefused then notifyUser("Rivals Skin Changer", "Skybox: a sky here would crash the game - see the console", 8) end
