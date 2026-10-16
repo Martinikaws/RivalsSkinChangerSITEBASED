@@ -25,12 +25,17 @@ def problems(folder):
         if not os.path.exists(path):
             found.append("%s missing" % face)
             continue
-        with Image.open(path) as im:
-            sizes[face] = im.size
-            if im.mode not in ("RGB", "RGBA"):
-                found.append("%s is %s, not RGB" % (face, im.mode))
-            if im.info.get("interlace"):
-                found.append("%s is interlaced" % face)
+        try:
+            with Image.open(path) as im:
+                im.load()
+                sizes[face] = im.size
+                if im.mode not in ("RGB", "RGBA"):
+                    found.append("%s is %s, not RGB" % (face, im.mode))
+                if im.info.get("interlace"):
+                    found.append("%s is interlaced" % face)
+        except (OSError, Image.DecompressionBombError) as e:
+            found.append("%s can't be read (%s)" % (face, e))
+            continue
         w, h = sizes[face]
         if w != h:
             found.append("%s is not square (%dx%d)" % (face, w, h))
