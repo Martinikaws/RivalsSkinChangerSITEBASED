@@ -3785,29 +3785,37 @@ local function startSpoof(conf)
     -- is also kept in a file: after a Matcha restart the player object may
     -- still carry a spoofed one.
     -- The DisplayName field sits at a fixed offset: it is only read or written
-    -- when it holds something that looks like a name (and equals the property,
-    -- where Matcha can read it); otherwise the offset doesn't fit this build.
-    -- Judged by the string's own length, since Matcha's read stops at the first
-    -- byte above 0x7E (a name like "Niccolò" reads as "Niccol").
-    local nameNow = readStdString(LP.Address + DISPLAY_NAME_OFF)
-    local nameLen = rd(LP.Address + DISPLAY_NAME_OFF + 16)
+    -- when it holds something that looks like a name and equals the property
+    -- (or the name this changer last wrote there); otherwise the offset
+    -- doesn't fit this build. Read byte by byte up to the string's own length,
+    -- since Matcha's string read stops at the first byte above 0x7E (a name
+    -- like "Niccolò" reads as "Niccol"). Without the property to compare
+    -- with, only a plain ASCII name is trusted.
+    local nameAddr = LP.Address + DISPLAY_NAME_OFF
+    local function nameBytes(n)
+        local cap = rd(nameAddr + 24)
+        local p = cap and (cap > 15 and rd(nameAddr) or nameAddr)
+        if not n or not cap or n > cap or not p or p == 0 then return nil end
+        local out = {}
+        for i = 0, n - 1 do
+            local ok, b = pcall(mrd, "byte", p + i)
+            if not ok or type(b) ~= "number" or b < 0 or b > 255 then return nil end
+            out[#out + 1] = string.char(b)
+        end
+        return table.concat(out)
+    end
+    local nameLen = rd(nameAddr + 16)
+    local nameNow = nameLen and nameLen >= 1 and nameLen <= 64 and nameBytes(nameLen) or nil
     local okDN, dn = pcall(function() return LP.DisplayName end)
     dn = okDN and type(dn) == "string" and dn ~= "" and dn or nil
-    local nameFits = type(nameNow) == "string" and nameLen and nameLen >= 1 and nameLen <= 64
-        and not nameNow:find("%c")
-        and (not dn or (nameLen == #dn and dn:sub(1, #nameNow) == nameNow)) or false
 
     local real = _G.__RIVALS_SPOOF_REAL
     if not real or real.user ~= LP.Name then
         real = {user = LP.Name, attrs = {}, stats = {}}
+        -- Older versions' file; their names can be cut short (see below).
         local okF, saved = pcall(readfile, SPOOF_REAL_FILE)
         local savedUser, savedName = (okF and type(saved) == "string" and saved or ""):match("^(.-)\n(.-)\n?$")
-        if savedUser == LP.Name and savedName and savedName ~= "" then
-            real.display = savedName
-        elseif nameFits then
-            real.display = readStdString(LP.Address + DISPLAY_NAME_OFF)
-            if real.display then pcall(writefile, SPOOF_REAL_FILE, LP.Name .. "\n" .. real.display .. "\n") end
-        end
+        if savedUser == LP.Name and savedName and savedName ~= "" then real.display = savedName end
         for key, attr in pairs(SPOOF_ATTRS) do real.attrs[key] = LP:GetAttribute(attr) end
         real.effectRead = true
         local ls = LP:FindFirstChild("CustomLeaderstats")
@@ -3826,6 +3834,31 @@ local function startSpoof(conf)
     end
     if real.attrs.effect == nil then real.attrs.effect = "" end
 
+    -- This version's name record, kept apart from the one above (older
+    -- versions read that, and expect their cut-short string read in it): the
+    -- real name, the name last written into the field, and the player object
+    -- it belongs to, in _G and in a file (a rerun, a Matcha restart). A new
+    -- player object means a rejoin, and a rejoin's field holds the game's name.
+    local nameFile = "rivals_spoof_name.txt"
+    local nm = _G.__RIVALS_SPOOF_NAME
+    if type(nm) ~= "table" or nm.user ~= LP.Name then
+        nm = {user = LP.Name}
+        local okN, rec = pcall(readfile, nameFile)
+        local u, d, w, lp = (okN and type(rec) == "string" and rec or ""):match("^(.-)\n(.-)\n(.-)\n(.-)\n?$")
+        if u == LP.Name and d ~= "" then nm.display, nm.wrote, nm.lp, nm.saved = d, w ~= "" and w or nil, tonumber(lp), rec end
+        _G.__RIVALS_SPOOF_NAME = nm
+    end
+    local function saveName()
+        local rec = LP.Name .. "\n" .. (nm.display or "") .. "\n" .. (nm.wrote or "") .. "\n"
+            .. (nm.lp and string.format("%.0f", nm.lp) or "") .. "\n"
+        if nm.display and rec ~= nm.saved then
+            nm.saved = rec
+            pcall(writefile, nameFile, rec)
+        end
+    end
+    local nameFits = nameNow and not nameNow:find("%c")
+        and (nameNow == dn or nameNow == nm.wrote or (not dn and nameNow == readStdString(nameAddr))) or false
+
     local want = {
         effect = conf.effect and NAME_EFFECTS[tostring(conf.effect):lower():gsub("%s", "")],
         name = conf.name and conf.name ~= "" and conf.name or nil,
@@ -3838,17 +3871,48 @@ local function startSpoof(conf)
     local any = device ~= nil
     for _, v in pairs(want) do if v ~= nil then any = true end end
 
+    if nameFits and nm.lp ~= LP.Address then
+        local realName = nameNow
+        if not nm.display then
+            -- First run of this version: an older one's record can hold the
+            -- name cut short at its first non-ASCII byte ("Niccol", or "" for
+            -- "Ñandu") while the field holds it whole - or the field can hold
+            -- that version's spoof, and the record the real name.
+            local old = real.display
+            if old and #nameNow > #old and nameNow:sub(1, #old) == old and nameNow:byte(#old + 1) > 126
+                and nameNow ~= want.name then
+                old = nameNow
+            end
+            if old == "" then realName = nil end
+            realName = old ~= "" and old or realName
+        end
+        nm.display, nm.wrote, nm.lp = realName, nil, LP.Address
+        saveName()
+    end
+    -- Older versions get the real name in their own form when it's plain text.
+    if not real.display and nm.display and not nm.display:find("[^\32-\126]") then
+        real.display = nm.display
+        if not (isfile and isfile(SPOOF_REAL_FILE)) then
+            pcall(writefile, SPOOF_REAL_FILE, LP.Name .. "\n" .. nm.display .. "\n")
+        end
+    end
+
     -- The name the player object should carry; the field has room for as many
     -- characters as the real name's storage (15 for a short name).
     local notes = {}
-    local shownName = nameFits and (want.name or real.display) or nil
+    local shownName = nameFits and (want.name or nm.display) or nil
     if want.name and not nameFits then
         notes[#notes + 1] = "the display name field doesn't fit this Roblox build - name left alone"
     end
     local nameCap = nameFits and rd(LP.Address + DISPLAY_NAME_OFF + 24)
     if shownName and want.name and nameCap and #want.name > nameCap then
         notes[#notes + 1] = "name longer than " .. nameCap .. " characters - kept the real one"
-        shownName = real.display
+        shownName = nm.display
+    end
+    -- An older version's spoof of the same name can already be there.
+    if shownName and shownName ~= nm.display and nameNow == shownName and nm.wrote ~= shownName then
+        nm.wrote = shownName
+        saveName()
     end
     -- The @username is redrawn over the real one's glyphs, so it can't be
     -- longer than the real one.
@@ -3871,8 +3935,10 @@ local function startSpoof(conf)
             local v = want[key] or real.stats[key]
             if obj and v ~= nil and obj.Value ~= v then pcall(function() obj.Value = v end) end
         end
-        if shownName and readStdString(LP.Address + DISPLAY_NAME_OFF) ~= shownName then
-            writeStdString(LP.Address + DISPLAY_NAME_OFF, shownName)
+        if shownName and (rd(nameAddr + 16) ~= #shownName or nameBytes(#shownName) ~= shownName)
+            and writeStdString(nameAddr, shownName) then
+            nm.wrote = shownName ~= nm.display and shownName or nil
+            saveName()
             -- The nametag and player list set your name again (through the
             -- game, so it redraws) whenever PlayerStatus changes: change it
             -- and put it back.
