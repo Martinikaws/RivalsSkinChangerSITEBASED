@@ -11,6 +11,9 @@ refused by its own lock.
 
 Only you see the changes. Nothing is sent to the server.
 
+Need help or want updates? Join the Discord:
+**[Martini's All In One](https://discord.gg/NZSyZwAXgd)**
+
 Prefer to choose everything in game? The same changer with a Matcha menu is in
 [RivalsSkinChangerFULLMATCHA](https://github.com/Martinikaws/RivalsSkinChangerFULLMATCHA),
 which reads the item lists from the running game instead of the website. Both
